@@ -23,20 +23,12 @@ class ScreenConfig:
 class GroundingConfig:
     """Vision grounding configuration."""
     # Retry settings
-    max_retries: int = 3
+    max_retries: int = 1
     retry_delay_seconds: float = 0.5
     
     # Detection thresholds
     confidence_threshold: float = 0.20  # Raw CLIP similarity-based threshold
     nms_iou_threshold: float = 0.3  # Non-maximum suppression IoU threshold
-    
-    # Sliding window settings
-    window_sizes: List[int] = field(default_factory=lambda: [40, 64, 100])
-    window_stride: int = 32  # Pixels to move between windows
-    
-    # Icon size constraints (pixels)
-    min_icon_size: int = 32
-    max_icon_size: int = 128
     
     # CLIP model
     clip_model_name: str = "openai/clip-vit-base-patch32"
