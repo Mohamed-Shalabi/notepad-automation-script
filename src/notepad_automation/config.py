@@ -31,8 +31,8 @@ class GroundingConfig:
     nms_iou_threshold: float = 0.3  # Non-maximum suppression IoU threshold
     
     # Sliding window settings
-    window_sizes: List[int] = field(default_factory=lambda: [48, 64, 80, 96])
-    window_stride: int = 48  # Pixels to move between windows
+    window_sizes: List[int] = field(default_factory=lambda: [32, 80])
+    window_stride: int = 64  # Pixels to move between windows
     
     # Icon size constraints (pixels)
     min_icon_size: int = 32
@@ -45,9 +45,9 @@ class GroundingConfig:
     notepad_prompts: List[str] = field(default_factory=lambda: [
         "a Notepad application icon",
         "a Notepad text editor icon",
-        "a Windows Notepad shortcut icon",
-        "a notepad icon with blue and yellow colors",
-        "an icon for text editing application",
+        "a WindowsOS Notepad shortcut icon",
+        "an icon for Notepad application on WindowsOS",
+        "a Notepad application icon or icon with text, not just a text without icon!",
     ])
 
 

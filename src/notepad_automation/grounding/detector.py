@@ -26,6 +26,8 @@ from dataclasses import dataclass
 
 import numpy as np
 import torch
+import torch.nn.functional as F
+import torchvision.transforms.functional as TF
 from PIL import Image
 from transformers import CLIPProcessor, CLIPModel
 
@@ -130,8 +132,22 @@ class IconDetector:
                 all_candidates=[]
             )
         
-        # Score each candidate against the prompts
-        scored_candidates = self._score_candidates(candidates, prompts)
+        # Prepare full image tensor for efficient scoring
+        # CLIP expects normalized tensors in range [0, 1] then normalized with mean/std
+        # TF.to_tensor handles the [0, 1] scaling
+        img_tensor = TF.to_tensor(screenshot.image).to(self.device).float()
+        
+        # Get normalization parameters from processor
+        # Use standard CLIP values if not found (typically these)
+        mean_vals = getattr(self.processor.image_processor, "image_mean", [0.48145466, 0.4578275, 0.40821073])
+        std_vals = getattr(self.processor.image_processor, "image_std", [0.26862954, 0.26130258, 0.27577711])
+        
+        mean = torch.tensor(mean_vals).view(3, 1, 1).to(self.device)
+        std = torch.tensor(std_vals).view(3, 1, 1).to(self.device)
+        img_tensor = (img_tensor - mean) / std
+        
+        # Score each candidate against the prompts using optimized batched tensor crops
+        scored_candidates = self._score_candidates(img_tensor, candidates, prompts)
         
         # Apply non-maximum suppression
         filtered_candidates = self._apply_nms(scored_candidates)
@@ -206,27 +222,23 @@ class IconDetector:
         # Scan the full screen width
         scan_width = img_width
         
-        # Use a grid pattern that matches typical icon spacing (~75-80px)
-        grid_step = 60  # Larger step for faster processing
+        # Use a grid pattern from config
+        grid_step = config.grounding.window_stride
         
-        # Use fewer, strategically chosen window sizes
-        window_sizes = [64, 80]  # Most desktop icons are in this range
+        # Use window sizes from config
+        window_sizes = config.grounding.window_sizes
         
         for window_size in window_sizes:
             # Scan the screen
             for y in range(20, img_height - window_size - 20, grid_step):
                 for x in range(20, scan_width, grid_step):
-                    # Extract region
-                    region = image.crop((x, y, x + window_size, y + window_size))
-                    
                     candidates.append({
                         "x": x,
                         "y": y,
                         "width": window_size,
                         "height": window_size,
                         "center_x": x + window_size // 2,
-                        "center_y": y + window_size // 2,
-                        "image": region
+                        "center_y": y + window_size // 2
                     })
             
 
@@ -235,60 +247,78 @@ class IconDetector:
     
     def _score_candidates(
         self,
+        full_image_tensor: torch.Tensor,
         candidates: List[dict],
         prompts: List[str],
-        batch_size: int = 32
+        batch_size: int = 128
     ) -> List[dict]:
         """
-        Score each candidate region against the text prompts using CLIP.
+        Score each candidate region using efficient batched tensor operations.
         
-        Processes candidates in batches for efficiency.
+        Args:
+            full_image_tensor: Normalized full screenshot tensor (C, H, W)
+            candidates: List of region coordinates
+            prompts: Text descriptions
+            batch_size: Number of regions to process in parallel
+            
+        Returns:
+            List of candidates with confidence scores.
         """
         scored = []
         
-        # Encode text prompts once
+        # 1. Pre-compute text features
         with torch.no_grad():
             text_inputs = self.processor(
                 text=prompts,
                 return_tensors="pt",
                 padding=True
             ).to(self.device)
-            text_embeddings = self.model.get_text_features(**text_inputs)
-            text_embeddings = text_embeddings / text_embeddings.norm(
-                dim=-1, keepdim=True
-            )
-        
-        # Process image candidates in batches
+            text_features = self.model.get_text_features(**text_inputs)
+            text_features = text_features / text_features.norm(dim=-1, keepdim=True)
+
+        # 2. Process image regions in batches
         for i in range(0, len(candidates), batch_size):
             batch = candidates[i:i + batch_size]
-            images = [c["image"] for c in batch]
             
-            with torch.no_grad():
-                image_inputs = self.processor(
-                    images=images,
-                    return_tensors="pt",
-                    padding=True
-                ).to(self.device)
-                image_embeddings = self.model.get_image_features(**image_inputs)
-                image_embeddings = image_embeddings / image_embeddings.norm(
-                    dim=-1, keepdim=True
+            # Efficiently extract and resize regions using torch
+            region_tensors = []
+            for c in batch:
+                # TF.crop is efficient on tensors
+                region = TF.crop(
+                    full_image_tensor, 
+                    c["y"], c["x"], 
+                    c["height"], c["width"]
                 )
+                # Resize to CLIP's expected input size (224x224)
+                region = F.interpolate(
+                    region.unsqueeze(0), 
+                    size=(224, 224), 
+                    mode="bilinear", 
+                    align_corners=False
+                ).squeeze(0)
+                region_tensors.append(region)
             
-            # Compute similarities
-            similarities = (image_embeddings @ text_embeddings.T).cpu().numpy()
+            # Stack into a single batch tensor
+            batch_tensor = torch.stack(region_tensors).to(self.device)
             
-            # Take max similarity across all prompts for each candidate
-            max_similarities = similarities.max(axis=1)
+            # 3. Compute image features and similarities
+            with torch.no_grad():
+                image_features = self.model.get_image_features(pixel_values=batch_tensor)
+                image_features = image_features / image_features.norm(dim=-1, keepdim=True)
+                
+                # Batch matrix multiplication for similarities
+                # (batch_size, embed_dim) @ (embed_dim, num_prompts)
+                similarities = (image_features @ text_features.T).cpu().numpy()
+            
+            # Take max similarity across all prompts
+            max_scores = similarities.max(axis=1)
             
             for j, candidate in enumerate(batch):
-                candidate_copy = {k: v for k, v in candidate.items() if k != "image"}
-                candidate_copy["confidence"] = float(max_similarities[j])
+                candidate_copy = candidate.copy()
+                candidate_copy["confidence"] = float(max_scores[j])
                 scored.append(candidate_copy)
-        
-        # Sort by confidence (descending)
-        scored.sort(key=lambda x: x["confidence"], reverse=True)
-        
-        return scored
+                
+        return sorted(scored, key=lambda x: x["confidence"], reverse=True)
     
     def _apply_nms(
         self,
