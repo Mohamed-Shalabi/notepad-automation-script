@@ -101,8 +101,7 @@ class IconDetector:
     def detect_notepad_icon(
         self,
         screenshot: ScreenshotResult,
-        custom_prompts: Optional[List[str]] = None,
-        negative_prompts: Optional[List[str]] = None
+        custom_prompts: Optional[List[str]] = None
     ) -> DetectionResult:
         """
         Detect the Notepad icon in a screenshot with resolution-adaptive scaling.
@@ -110,7 +109,6 @@ class IconDetector:
         Args:
             screenshot: The desktop screenshot to search.
             custom_prompts: Optional custom text prompts.
-            negative_prompts: Optional negative prompts.
         
         Returns:
             DetectionResult with coordinates mapped to the original resolution.
@@ -128,10 +126,9 @@ class IconDetector:
         else:
             detect_image = screenshot.image
 
-        pos_prompts = custom_prompts or config.grounding.notepad_prompts
-        neg_prompts = negative_prompts or config.grounding.negative_prompts
+        prompts = custom_prompts or config.grounding.notepad_prompts
         
-        logger.info(f"Detecting Notepad icon with {len(pos_prompts)} positive and {len(neg_prompts)} negative prompts")
+        logger.info(f"Detecting Notepad icon with {len(prompts)} prompts")
         
         # 2. Extract candidate regions from the (possibly scaled) image
         # Mocking a ScreenshotResult-like object for _extract_candidates
@@ -169,7 +166,7 @@ class IconDetector:
         img_tensor = (img_tensor - mean) / std
         
         # Score candidates
-        scored_candidates = self._score_candidates(img_tensor, candidates, pos_prompts, neg_prompts)
+        scored_candidates = self._score_candidates(img_tensor, candidates, prompts)
         
         # 4. Filter and Remap
         filtered_candidates = self._apply_nms(scored_candidates)
@@ -321,31 +318,27 @@ class IconDetector:
         self,
         full_image_tensor: torch.Tensor,
         candidates: List[dict],
-        pos_prompts: List[str],
-        neg_prompts: List[str],
+        prompts: List[str],
         batch_size: int = 128
     ) -> List[dict]:
         """
-        Score each candidate region using efficient batched tensor operations and negative prompting.
+        Score each candidate region using efficient batched tensor operations.
         
         Args:
             full_image_tensor: Normalized full screenshot tensor (C, H, W)
             candidates: List of region coordinates
-            pos_prompts: Positive text descriptions
-            neg_prompts: Negative text descriptions to suppress noise
+            prompts: Text descriptions
             batch_size: Number of regions to process in parallel
             
         Returns:
             List of candidates with confidence scores.
         """
         scored = []
-        all_prompts = pos_prompts + neg_prompts
-        num_pos = len(pos_prompts)
         
         # 1. Pre-compute text features
         with torch.no_grad():
             text_inputs = self.processor(
-                text=all_prompts,
+                text=prompts,
                 return_tensors="pt",
                 padding=True
             ).to(self.device)
@@ -383,15 +376,11 @@ class IconDetector:
                 image_features = image_features / image_features.norm(dim=-1, keepdim=True)
                 
                 # Batch matrix multiplication for similarities
-                logits_scale = self.model.logit_scale.exp()
-                similarities = (image_features @ text_features.T) * logits_scale
-                
-                # Apply Softmax across positive vs negative prompts for each image
-                # This significantly boosts confidence for strong matches
-                probs = torch.softmax(similarities, dim=-1).cpu().numpy()
-                
-            # Confidence is the sum of probabilities for the positive prompts
-            batch_scores = probs[:, :num_pos].sum(axis=1)
+                # (batch_size, embed_dim) @ (embed_dim, num_prompts)
+                similarities = (image_features @ text_features.T).cpu().numpy()
+            
+            # Take max similarity across all prompts
+            batch_scores = similarities.max(axis=1)
             
             for j, candidate in enumerate(batch):
                 candidate_copy = candidate.copy()

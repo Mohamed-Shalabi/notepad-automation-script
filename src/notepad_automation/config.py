@@ -27,7 +27,7 @@ class GroundingConfig:
     retry_delay_seconds: float = 0.5
     
     # Detection thresholds
-    confidence_threshold: float = 0.50  # Probability-based threshold with Negative Prompting
+    confidence_threshold: float = 0.20  # Raw CLIP similarity-based threshold
     nms_iou_threshold: float = 0.3  # Non-maximum suppression IoU threshold
     
     # Sliding window settings
@@ -48,15 +48,6 @@ class GroundingConfig:
         "a desktop launcher for Notepad with text",
         "a small notebook icon on a computer desktop",
         "a Notepad app icon, not just plain text",
-    ])
-    
-    # Negative prompts to suppress false positives (text, wallpaper, etc)
-    negative_prompts: List[str] = field(default_factory=lambda: [
-        "plain text excluding \"Notepad\"",
-        "plain text containing \"Notebook\" but in a paragraph of text",
-        "a folder icon",
-        "desktop wallpaper texture",
-        "random user interface elements",
     ])
 
 
