@@ -20,27 +20,11 @@ class ScreenConfig:
 
 
 @dataclass
-class GroundingConfig:
-    """Vision grounding configuration."""
-    # Retry settings
-    max_retries: int = 1
-    retry_delay_seconds: float = 0.5
-    
-    # Detection thresholds
-    confidence_threshold: float = 0.20  # Raw CLIP similarity-based threshold
-    nms_iou_threshold: float = 0.3  # Non-maximum suppression IoU threshold
-    
-    # CLIP model
-    clip_model_name: str = "openai/clip-vit-base-patch32"
-    
-    # Text prompts for Notepad icon detection
-    notepad_prompts: List[str] = field(default_factory=lambda: [
-        "a Windows desktop icon for the Notepad application",
-        "a Notepad shortcut icon with a signature notebook",
-        "a desktop launcher for Notepad with text",
-        "a small notebook icon on a computer desktop",
-        "a Notepad app icon, not just plain text",
-    ])
+class DesktopCoordinatesConfig:
+    """Fixed coordinates for the Notepad icon."""
+    # Notepad icon coordinates on the desktop
+    notepad_icon_x: int = 100
+    notepad_icon_y: int = 100
 
 
 @dataclass
@@ -118,7 +102,7 @@ class LogConfig:
 class Config:
     """Master configuration combining all sub-configurations."""
     screen: ScreenConfig = field(default_factory=ScreenConfig)
-    grounding: GroundingConfig = field(default_factory=GroundingConfig)
+    desktop_coords: DesktopCoordinatesConfig = field(default_factory=DesktopCoordinatesConfig)
     automation: AutomationConfig = field(default_factory=AutomationConfig)
     api: APIConfig = field(default_factory=APIConfig)
     file: FileConfig = field(default_factory=FileConfig)

@@ -27,8 +27,6 @@ from typing import List, Optional
 from dataclasses import dataclass
 
 from .config import config
-from .grounding import capture_desktop_screenshot, IconDetector
-from .grounding.screenshot import save_screenshot, ScreenshotResult
 from .automation import MouseController, KeyboardController, WindowValidator
 from .api import APIClient, Post
 from .files import FileManager
@@ -88,7 +86,6 @@ class RunResult:
     failed_posts: int
     results: List[AutomationResult]
     total_duration_seconds: float
-    screenshots_saved: List[str]
 
 
 class NotepadAutomation:
@@ -101,28 +98,14 @@ class NotepadAutomation:
     3. Automate Notepad to create and save files
     """
     
-    def __init__(self, screenshots_dir: Optional[Path] = None):
-        """
-        Initialize the automation system.
-        
-        Args:
-            screenshots_dir: Directory to save annotated screenshots (optional).
-        """
+    def __init__(self):
+        """Initialize the automation system."""
         self.logger = logging.getLogger("notepad_automation.main")
-        
-        # Initialize components
-        self.detector = IconDetector()
         self.mouse = MouseController()
         self.keyboard = KeyboardController()
         self.window = WindowValidator()
         self.api = APIClient()
         self.files = FileManager()
-        
-        # Screenshots directory
-        self.screenshots_dir = screenshots_dir or Path("screenshots")
-        self.screenshots_dir.mkdir(parents=True, exist_ok=True)
-        
-        self.saved_screenshots: List[str] = []
         
         self.logger.info("NotepadAutomation initialized")
     
@@ -151,8 +134,7 @@ class NotepadAutomation:
                 successful_posts=0,
                 failed_posts=0,
                 results=[],
-                total_duration_seconds=time.time() - start_time,
-                screenshots_saved=self.saved_screenshots
+                total_duration_seconds=time.time() - start_time
             )
         
         # Step 1: Fetch posts from API
@@ -181,32 +163,13 @@ class NotepadAutomation:
         self.window.close_all_notepad_windows()
         time.sleep(0.5)
 
-        # Step 4: Capture screenshot and detect Notepad icon
-        screenshot = capture_desktop_screenshot()
-            
-        # Save annotated screenshot for first, middle, and last posts
-        self._save_detection_screenshot(screenshot)
-            
-        result = self.detector.detect_with_retry(
-            screenshot_func=capture_desktop_screenshot
-        )
-            
-        if not result.found:
-            return RunResult(
-                success=False,
-                total_posts=0,
-                successful_posts=0,
-                failed_posts=0,
-                results=[],
-                total_duration_seconds=time.time() - start_time,
-                screenshots_saved=self.saved_screenshots,
-                error="Notepad icon not detected",
-                duration_seconds=time.time() - start_time
-            )
+        # Step 4: Get Notepad icon coordinates
+        icon_x = config.desktop_coords.notepad_icon_x
+        icon_y = config.desktop_coords.notepad_icon_y
             
         # Step 5: Double-click the icon
-        self.logger.info(f"Double-clicking at ({result.center_x}, {result.center_y})")
-        self.mouse.double_click(result.center_x, result.center_y)
+        self.logger.info(f"Double-clicking at ({icon_x}, {icon_y})")
+        self.mouse.double_click(icon_x, icon_y)
             
         # Step 6: Wait for Notepad window
         window = self.window.wait_for_notepad()
@@ -218,10 +181,7 @@ class NotepadAutomation:
                 successful_posts=0,
                 failed_posts=0,
                 results=[],
-                total_duration_seconds=time.time() - start_time,
-                screenshots_saved=self.saved_screenshots,
-                error="Notepad window did not appear",
-                duration_seconds=time.time() - start_time
+                total_duration_seconds=time.time() - start_time
             )
             
         # Focus the window
@@ -256,7 +216,6 @@ class NotepadAutomation:
         self.logger.info(f"Successful: {successful}")
         self.logger.info(f"Failed: {failed}")
         self.logger.info(f"Duration: {total_duration:.1f}s")
-        self.logger.info(f"Screenshots saved: {len(self.saved_screenshots)}")
         self.logger.info("=" * 60)
         
         return RunResult(
@@ -265,8 +224,7 @@ class NotepadAutomation:
             successful_posts=successful,
             failed_posts=failed,
             results=results,
-            total_duration_seconds=total_duration,
-            screenshots_saved=self.saved_screenshots
+            total_duration_seconds=total_duration
         )
     
     def _ensure_prerequisites(self) -> None:
@@ -276,11 +234,6 @@ class NotepadAutomation:
         # Test API connection
         if not self.api.test_connection():
             self.logger.warning("API connection test failed (may work anyway)")
-        
-        # Pre-load CLIP model
-        self.logger.info("Loading CLIP model (this may take a moment)...")
-        self.detector.load_model()
-        self.logger.info("CLIP model loaded")
     
     def _process_post(self, post: Post, index: int) -> AutomationResult:
         """
@@ -366,42 +319,6 @@ class NotepadAutomation:
                 duration_seconds=time.time() - start_time
             )
     
-    def _save_detection_screenshot(
-        self,
-        screenshot: ScreenshotResult,
-    ) -> None:
-        """Save an annotated screenshot showing detection results."""
-        result = self.detector.detect_notepad_icon(screenshot)
-        
-        # Prepare annotations
-        annotations = []
-        
-        if result.found:
-            annotations.append((
-                result.bbox_x,
-                result.bbox_y,
-                result.bbox_width,
-                result.bbox_height,
-                "Notepad",
-                result.confidence
-            ))
-        
-        # Add top candidates
-        for candidate in result.all_candidates[:5]:
-            if candidate.get("confidence", 0) > config.grounding.confidence_threshold * 0.5:
-                annotations.append((
-                    candidate["x"],
-                    candidate["y"],
-                    candidate["width"],
-                    candidate["height"],
-                    "",
-                    candidate["confidence"]
-                ))
-        
-        # Save screenshot
-        filepath = self.screenshots_dir / f"detection.png"
-        save_screenshot(screenshot, str(filepath), annotations)
-        self.saved_screenshots.append(str(filepath))
 
 
 def main():
@@ -411,9 +328,7 @@ def main():
     
     try:
         # Create and run automation
-        automation = NotepadAutomation(
-            screenshots_dir=Path("screenshots")
-        )
+        automation = NotepadAutomation()
         result = automation.run()
         
         # Exit with appropriate code

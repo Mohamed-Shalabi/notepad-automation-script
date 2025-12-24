@@ -29,7 +29,7 @@ class TestAPIClient:
     def test_initialization(self, client):
         """Test that API client initializes correctly."""
         assert client is not None
-        assert client.base_url == "https://jsonplaceholder.typicode.com"
+        assert client.base_url == "https://dummyjson.com"
     
     def test_connection(self, client):
         """Test API connection."""
