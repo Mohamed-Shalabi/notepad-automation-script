@@ -91,6 +91,13 @@ class IconDetector:
             ).to(self.device)
             self.model.eval()
             
+            # Apply Dynamic INT8 Quantization for CPU acceleration
+            if self.device == "cpu":
+                logger.info("Applying Dynamic INT8 Quantization for CPU performance")
+                self.model = torch.quantization.quantize_dynamic(
+                    self.model, {torch.nn.Linear}, dtype=torch.qint8
+                )
+            
             self._model_loaded = True
             logger.info("CLIP model loaded successfully")
             
@@ -115,28 +122,22 @@ class IconDetector:
         """
         self.load_model()
         
-        # 1. Get scaled dimensions for detection (targets: 990, 1280, 1920, 2560)
+        # 1. Get search parameters based on resolution (targets: 990, 1280, 1920, 2560)
         orig_w, orig_h = screenshot.image.size
-        target_w, target_h, scale, dyn_windows, dyn_stride = self._get_scaled_dimensions(orig_w, orig_h)
+        dyn_windows, dyn_stride = self._get_search_params(orig_w, orig_h)
         
-        # Prepare the image for detection (scale down if necessary)
-        if scale < 1.0:
-            logger.info(f"Downscaling screenshot from {orig_w}x{orig_h} to {target_w}x{target_h} (scale: {scale:.2f})")
-            detect_image = screenshot.image.resize((target_w, target_h), Image.LANCZOS)
-        else:
-            detect_image = screenshot.image
-
+        detect_image = screenshot.image
         prompts = custom_prompts or config.grounding.notepad_prompts
         
         logger.info(f"Detecting Notepad icon with {len(prompts)} prompts")
         
-        # 2. Extract candidate regions from the (possibly scaled) image
+        # 2. Extract candidate regions from the image
         # Mocking a ScreenshotResult-like object for _extract_candidates
         # since it only uses the .image attribute currently.
         class ScaledResult:
             def __init__(self, img): self.image = img
             
-        # Use dynamic parameters calculated by scaling logic above
+        # Use dynamic parameters calculated based on resolution above
         
         candidates = self._extract_candidates(
             ScaledResult(detect_image),
@@ -171,6 +172,12 @@ class IconDetector:
         # 4. Filter and Remap
         filtered_candidates = self._apply_nms(scored_candidates)
         
+        # Log top 5 candidates for debugging
+        if filtered_candidates:
+            logger.info("Top 5 detection candidates:")
+            for i, cand in enumerate(filtered_candidates[:5]):
+                logger.info(f"  {i+1}. Position: ({cand['center_x']}, {cand['center_y']}), Confidence: {cand['confidence']:.3f}")
+        
         if not filtered_candidates:
             return DetectionResult(
                 found=False,
@@ -181,58 +188,41 @@ class IconDetector:
                 all_candidates=[]
             )
         
-        # Get the best candidate and map back to original resolution
+        # Get the best candidate
         best = filtered_candidates[0]
         
-        # Simple lambda to rescale coordinates
-        rescale = lambda x: int(x / scale)
-        
-        remapped_best = {
-            "center_x": rescale(best["center_x"]),
-            "center_y": rescale(best["center_y"]),
-            "x": rescale(best["x"]),
-            "y": rescale(best["y"]),
-            "width": rescale(best["width"]),
-            "height": rescale(best["height"]),
-            "confidence": best["confidence"]
-        }
-        
         # Check confidence threshold
-        if remapped_best["confidence"] < config.grounding.confidence_threshold:
+        if best["confidence"] < config.grounding.confidence_threshold:
             logger.warning(
-                f"Best candidate confidence {remapped_best['confidence']:.3f} "
+                f"Best candidate confidence {best['confidence']:.3f} "
                 f"below threshold {config.grounding.confidence_threshold}"
             )
             return DetectionResult(
                 found=False,
-                center_x=remapped_best["center_x"],
-                center_y=remapped_best["center_y"],
-                bbox_x=remapped_best["x"],
-                bbox_y=remapped_best["y"],
-                bbox_width=remapped_best["width"],
-                bbox_height=remapped_best["height"],
-                confidence=remapped_best["confidence"],
-                all_candidates=filtered_candidates # Keeping these in scaled space for overlay if needed, or remap?
+                center_x=best["center_x"],
+                center_y=best["center_y"],
+                bbox_x=best["x"],
+                bbox_y=best["y"],
+                bbox_width=best["width"],
+                bbox_height=best["height"],
+                confidence=best["confidence"],
+                all_candidates=filtered_candidates
             )
-            # Note: annotations usually happen on scaled space if we use the saved scaled screenshot, 
-            # but main.py saves the original screenshot usually. 
-            # For simplicity, we keep all_candidates in scaled space for now, 
-            # but we return the remapped primary detection.
         
         logger.info(
-            f"Notepad icon detected at ({remapped_best['center_x']}, {remapped_best['center_y']}) "
-            f"(original resolution) with confidence {remapped_best['confidence']:.3f}"
+            f"Notepad icon detected at ({best['center_x']}, {best['center_y']}) "
+            f"with confidence {best['confidence']:.3f}"
         )
         
         return DetectionResult(
             found=True,
-            center_x=remapped_best["center_x"],
-            center_y=remapped_best["center_y"],
-            bbox_x=remapped_best["x"],
-            bbox_y=remapped_best["y"],
-            bbox_width=remapped_best["width"],
-            bbox_height=remapped_best["height"],
-            confidence=remapped_best["confidence"],
+            center_x=best["center_x"],
+            center_y=best["center_y"],
+            bbox_x=best["x"],
+            bbox_y=best["y"],
+            bbox_width=best["width"],
+            bbox_height=best["height"],
+            confidence=best["confidence"],
             all_candidates=filtered_candidates
         )
     
@@ -276,43 +266,36 @@ class IconDetector:
         
         return candidates
     
-    def _get_scaled_dimensions(self, width: int, height: int) -> Tuple[int, int, float, Optional[List[int]], Optional[int]]:
+    def _get_search_params(self, width: int, height: int) -> Tuple[Optional[List[int]], Optional[int]]:
         """
-        Determine target dimensions and dynamic window parameters.
+        Determine target search parameters based on resolution.
         
-        Tiers (width >= threshold -> target_width):
-        - 4032 (4K+5%) -> 2560 (Windows: [80, 130, 180], Stride: 40)
-        - 3840 (4K)    -> 1920 (Windows: [64, 95, 130], Stride: 32)
-        - 2560 (2K)    -> 1280 (Windows: [40, 65, 90], Stride: 20)
-        - 1920 (FHD)   -> 990  (Windows: [32, 50, 70], Stride: 16)
+        Tiers (width >= threshold):
+        - 4032 (4K+5%) -> Windows: [100, 150], Stride: 93
+        - 3840 (4K)    -> Windows: [75, 110], Stride: 70
+        - 2560 (2K)    -> Windows: [54, 78], Stride: 48
+        - 1920 (FHD)   -> Windows: [42, 60], Stride: 36
 
         These tiers are calculated for 9:16 screens to notepad app in all scale values from 100% to 175%
         """
-        # Define tiers: (threshold, target_w, window_sizes, stride)
+        # Define tiers: (threshold, window_sizes, stride)
         tiermaps = [
-            (4032, 2560, [100, 150], 93),
-            (3840, 1920, [75, 110], 70),
-            (2560, 1280, [54, 78], 48),
-            (1920, 990, [42, 60], 36)
+            (4032, [120, 180], 110),
+            (3840, [100, 150], 100),
+            (2560, [75, 110], 85),
+            (1920, [54, 78], 72)
         ]
         
-        target_w = width
         dyn_windows = None
         dyn_stride = None
         
-        for threshold, target, windows, stride in tiermaps:
+        for threshold, windows, stride in tiermaps:
             if width >= threshold:
-                target_w = target
                 dyn_windows = windows
                 dyn_stride = stride
                 break
         
-        if target_w == width:
-            return width, height, 1.0, None, None
-            
-        scale_factor = target_w / width
-        target_h = int(height * scale_factor)
-        return target_w, target_h, scale_factor, dyn_windows, dyn_stride
+        return dyn_windows, dyn_stride
     
     def _score_candidates(
         self,
