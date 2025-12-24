@@ -160,7 +160,7 @@ class NotepadAutomation:
         self.logger.info("Step 1: Fetching posts from API")
         
         try:
-            posts = self.api.fetch_posts()
+            posts = self.api.fetch_posts(max_posts=1)
             self.logger.info(f"Successfully fetched {len(posts)} posts")
         except Exception as e:
             self.logger.error(f"Failed to fetch posts: {e}")

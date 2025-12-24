@@ -27,12 +27,12 @@ class GroundingConfig:
     retry_delay_seconds: float = 0.5
     
     # Detection thresholds
-    confidence_threshold: float = 0.15  # Minimum CLIP similarity score
+    confidence_threshold: float = 0.50  # Probability-based threshold with Negative Prompting
     nms_iou_threshold: float = 0.3  # Non-maximum suppression IoU threshold
     
     # Sliding window settings
-    window_sizes: List[int] = field(default_factory=lambda: [32, 80])
-    window_stride: int = 64  # Pixels to move between windows
+    window_sizes: List[int] = field(default_factory=lambda: [40, 64, 100])
+    window_stride: int = 32  # Pixels to move between windows
     
     # Icon size constraints (pixels)
     min_icon_size: int = 32
@@ -43,11 +43,21 @@ class GroundingConfig:
     
     # Text prompts for Notepad icon detection
     notepad_prompts: List[str] = field(default_factory=lambda: [
-        "a Notepad application icon",
-        "a Notepad text editor icon",
-        "a WindowsOS Notepad shortcut icon",
-        "an icon for Notepad application on WindowsOS",
-        "a Notepad application icon or icon with text, not just a text without icon!",
+        "a Windows desktop icon for the Notepad application",
+        "a Notepad shortcut icon with a signature notebook",
+        "a desktop launcher for Notepad with text",
+        "a small notebook icon on a computer desktop",
+        "a Notepad app icon, not just plain text",
+    ])
+    
+    # Negative prompts to suppress false positives (text, wallpaper, etc)
+    negative_prompts: List[str] = field(default_factory=lambda: [
+        "plain text not containing \"Notepad\"",
+        "plain text containing \"Notebook\" but in a paragraph of text",
+        "icon not related to Notepad",
+        "a folder icon",
+        "desktop wallpaper texture",
+        "random user interface elements",
     ])
 
 

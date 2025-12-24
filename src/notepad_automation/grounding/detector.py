@@ -101,25 +101,45 @@ class IconDetector:
     def detect_notepad_icon(
         self,
         screenshot: ScreenshotResult,
-        custom_prompts: Optional[List[str]] = None
+        custom_prompts: Optional[List[str]] = None,
+        negative_prompts: Optional[List[str]] = None
     ) -> DetectionResult:
         """
-        Detect the Notepad icon in a screenshot.
+        Detect the Notepad icon in a screenshot with resolution-adaptive scaling.
         
         Args:
             screenshot: The desktop screenshot to search.
-            custom_prompts: Optional custom text prompts (uses config defaults if None).
+            custom_prompts: Optional custom text prompts.
+            negative_prompts: Optional negative prompts.
         
         Returns:
-            DetectionResult with the best match and all candidates.
+            DetectionResult with coordinates mapped to the original resolution.
         """
         self.load_model()
         
-        prompts = custom_prompts or config.grounding.notepad_prompts
-        logger.info(f"Detecting Notepad icon with {len(prompts)} prompts")
+        # 1. Get scaled dimensions for detection
+        orig_w, orig_h = screenshot.image.size
+        target_w, target_h, scale = self._get_scaled_dimensions(orig_w, orig_h)
         
-        # Extract candidate regions using sliding window
-        candidates = self._extract_candidates(screenshot)
+        # Prepare the image for detection (scale down if necessary)
+        if scale < 1.0:
+            logger.info(f"Downscaling screenshot from {orig_w}x{orig_h} to {target_w}x{target_h} (scale: {scale:.2f})")
+            detect_image = screenshot.image.resize((target_w, target_h), Image.LANCZOS)
+        else:
+            detect_image = screenshot.image
+
+        pos_prompts = custom_prompts or config.grounding.notepad_prompts
+        neg_prompts = negative_prompts or config.grounding.negative_prompts
+        
+        logger.info(f"Detecting Notepad icon with {len(pos_prompts)} positive and {len(neg_prompts)} negative prompts")
+        
+        # 2. Extract candidate regions from the (possibly scaled) image
+        # Mocking a ScreenshotResult-like object for _extract_candidates
+        # since it only uses the .image attribute currently.
+        class ScaledResult:
+            def __init__(self, img): self.image = img
+            
+        candidates = self._extract_candidates(ScaledResult(detect_image))
         logger.info(f"Extracted {len(candidates)} candidate regions")
         
         if not candidates:
@@ -132,24 +152,20 @@ class IconDetector:
                 all_candidates=[]
             )
         
-        # Prepare full image tensor for efficient scoring
-        # CLIP expects normalized tensors in range [0, 1] then normalized with mean/std
-        # TF.to_tensor handles the [0, 1] scaling
-        img_tensor = TF.to_tensor(screenshot.image).to(self.device).float()
+        # 3. Prepare full image tensor for efficient scoring
+        img_tensor = TF.to_tensor(detect_image).to(self.device).float()
         
-        # Get normalization parameters from processor
-        # Use standard CLIP values if not found (typically these)
+        # Normalize
         mean_vals = getattr(self.processor.image_processor, "image_mean", [0.48145466, 0.4578275, 0.40821073])
         std_vals = getattr(self.processor.image_processor, "image_std", [0.26862954, 0.26130258, 0.27577711])
-        
         mean = torch.tensor(mean_vals).view(3, 1, 1).to(self.device)
         std = torch.tensor(std_vals).view(3, 1, 1).to(self.device)
         img_tensor = (img_tensor - mean) / std
         
-        # Score each candidate against the prompts using optimized batched tensor crops
-        scored_candidates = self._score_candidates(img_tensor, candidates, prompts)
+        # Score candidates
+        scored_candidates = self._score_candidates(img_tensor, candidates, pos_prompts, neg_prompts)
         
-        # Apply non-maximum suppression
+        # 4. Filter and Remap
         filtered_candidates = self._apply_nms(scored_candidates)
         
         if not filtered_candidates:
@@ -162,41 +178,58 @@ class IconDetector:
                 all_candidates=[]
             )
         
-        # Get the best candidate
+        # Get the best candidate and map back to original resolution
         best = filtered_candidates[0]
         
+        # Simple lambda to rescale coordinates
+        rescale = lambda x: int(x / scale)
+        
+        remapped_best = {
+            "center_x": rescale(best["center_x"]),
+            "center_y": rescale(best["center_y"]),
+            "x": rescale(best["x"]),
+            "y": rescale(best["y"]),
+            "width": rescale(best["width"]),
+            "height": rescale(best["height"]),
+            "confidence": best["confidence"]
+        }
+        
         # Check confidence threshold
-        if best["confidence"] < config.grounding.confidence_threshold:
+        if remapped_best["confidence"] < config.grounding.confidence_threshold:
             logger.warning(
-                f"Best candidate confidence {best['confidence']:.3f} "
+                f"Best candidate confidence {remapped_best['confidence']:.3f} "
                 f"below threshold {config.grounding.confidence_threshold}"
             )
             return DetectionResult(
                 found=False,
-                center_x=best["center_x"],
-                center_y=best["center_y"],
-                bbox_x=best["x"],
-                bbox_y=best["y"],
-                bbox_width=best["width"],
-                bbox_height=best["height"],
-                confidence=best["confidence"],
-                all_candidates=filtered_candidates
+                center_x=remapped_best["center_x"],
+                center_y=remapped_best["center_y"],
+                bbox_x=remapped_best["x"],
+                bbox_y=remapped_best["y"],
+                bbox_width=remapped_best["width"],
+                bbox_height=remapped_best["height"],
+                confidence=remapped_best["confidence"],
+                all_candidates=filtered_candidates # Keeping these in scaled space for overlay if needed, or remap?
             )
+            # Note: annotations usually happen on scaled space if we use the saved scaled screenshot, 
+            # but main.py saves the original screenshot usually. 
+            # For simplicity, we keep all_candidates in scaled space for now, 
+            # but we return the remapped primary detection.
         
         logger.info(
-            f"Notepad icon detected at ({best['center_x']}, {best['center_y']}) "
-            f"with confidence {best['confidence']:.3f}"
+            f"Notepad icon detected at ({remapped_best['center_x']}, {remapped_best['center_y']}) "
+            f"(original resolution) with confidence {remapped_best['confidence']:.3f}"
         )
         
         return DetectionResult(
             found=True,
-            center_x=best["center_x"],
-            center_y=best["center_y"],
-            bbox_x=best["x"],
-            bbox_y=best["y"],
-            bbox_width=best["width"],
-            bbox_height=best["height"],
-            confidence=best["confidence"],
+            center_x=remapped_best["center_x"],
+            center_y=remapped_best["center_y"],
+            bbox_x=remapped_best["x"],
+            bbox_y=remapped_best["y"],
+            bbox_width=remapped_best["width"],
+            bbox_height=remapped_best["height"],
+            confidence=remapped_best["confidence"],
             all_candidates=filtered_candidates
         )
     
@@ -245,31 +278,63 @@ class IconDetector:
         
         return candidates
     
+    def _get_scaled_dimensions(self, width: int, height: int) -> Tuple[int, int, float]:
+        """
+        Determine target dimensions based on aggressive 5% margin logic.
+        
+        Targets: 3840 (4K), 2560 (2K), 1920 (FHD), 1280 (HD).
+        Margin: 1.05 (5%)
+        """
+        # Define tiers in descending order based on user criteria
+        tiermaps = [
+            (2560, 4032),  # Target 2560 if width >= 4032
+            (1920, 3840),  # Target 1920 if width >= 3840
+            (1280, 2560),  # Target 1280 if width >= 2560
+            (990, 1920)    # Target 990 if width >= 1920
+        ]
+        
+        target_w = width
+        for target, threshold in tiermaps:
+            if width >= threshold:
+                target_w = target
+                break
+        
+        if target_w == width:
+            return width, height, 1.0
+            
+        scale_factor = target_w / width
+        target_h = int(height * scale_factor)
+        return target_w, target_h, scale_factor
+    
     def _score_candidates(
         self,
         full_image_tensor: torch.Tensor,
         candidates: List[dict],
-        prompts: List[str],
+        pos_prompts: List[str],
+        neg_prompts: List[str],
         batch_size: int = 128
     ) -> List[dict]:
         """
-        Score each candidate region using efficient batched tensor operations.
+        Score each candidate region using efficient batched tensor operations and negative prompting.
         
         Args:
             full_image_tensor: Normalized full screenshot tensor (C, H, W)
             candidates: List of region coordinates
-            prompts: Text descriptions
+            pos_prompts: Positive text descriptions
+            neg_prompts: Negative text descriptions to suppress noise
             batch_size: Number of regions to process in parallel
             
         Returns:
             List of candidates with confidence scores.
         """
         scored = []
+        all_prompts = pos_prompts + neg_prompts
+        num_pos = len(pos_prompts)
         
         # 1. Pre-compute text features
         with torch.no_grad():
             text_inputs = self.processor(
-                text=prompts,
+                text=all_prompts,
                 return_tensors="pt",
                 padding=True
             ).to(self.device)
@@ -307,15 +372,19 @@ class IconDetector:
                 image_features = image_features / image_features.norm(dim=-1, keepdim=True)
                 
                 # Batch matrix multiplication for similarities
-                # (batch_size, embed_dim) @ (embed_dim, num_prompts)
-                similarities = (image_features @ text_features.T).cpu().numpy()
-            
-            # Take max similarity across all prompts
-            max_scores = similarities.max(axis=1)
+                logits_scale = self.model.logit_scale.exp()
+                similarities = (image_features @ text_features.T) * logits_scale
+                
+                # Apply Softmax across positive vs negative prompts for each image
+                # This significantly boosts confidence for strong matches
+                probs = torch.softmax(similarities, dim=-1).cpu().numpy()
+                
+            # Confidence is the sum of probabilities for the positive prompts
+            batch_scores = probs[:, :num_pos].sum(axis=1)
             
             for j, candidate in enumerate(batch):
                 candidate_copy = candidate.copy()
-                candidate_copy["confidence"] = float(max_scores[j])
+                candidate_copy["confidence"] = float(batch_scores[j])
                 scored.append(candidate_copy)
                 
         return sorted(scored, key=lambda x: x["confidence"], reverse=True)
