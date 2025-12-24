@@ -117,9 +117,9 @@ class IconDetector:
         """
         self.load_model()
         
-        # 1. Get scaled dimensions for detection
+        # 1. Get scaled dimensions for detection (targets: 990, 1280, 1920, 2560)
         orig_w, orig_h = screenshot.image.size
-        target_w, target_h, scale = self._get_scaled_dimensions(orig_w, orig_h)
+        target_w, target_h, scale, dyn_windows, dyn_stride = self._get_scaled_dimensions(orig_w, orig_h)
         
         # Prepare the image for detection (scale down if necessary)
         if scale < 1.0:
@@ -139,8 +139,14 @@ class IconDetector:
         class ScaledResult:
             def __init__(self, img): self.image = img
             
-        candidates = self._extract_candidates(ScaledResult(detect_image))
-        logger.info(f"Extracted {len(candidates)} candidate regions")
+        # Use dynamic parameters calculated by scaling logic above
+        
+        candidates = self._extract_candidates(
+            ScaledResult(detect_image),
+            window_sizes=dyn_windows,
+            window_stride=dyn_stride
+        )
+        logger.info(f"Extracted {len(candidates)} candidate regions using stride {dyn_stride or config.grounding.window_stride}")
         
         if not candidates:
             return DetectionResult(
@@ -235,36 +241,31 @@ class IconDetector:
     
     def _extract_candidates(
         self,
-        screenshot: ScreenshotResult
+        screenshot: ScreenshotResult,
+        window_sizes: Optional[List[int]] = None,
+        window_stride: Optional[int] = None
     ) -> List[dict]:
         """
         Extract candidate regions using optimized grid-based approach.
         
-        Desktop icons are typically:
-        - Spread across the screen or in a grid pattern
-        - In a grid pattern (~80px apart)
-        - Between 32-96px in size
-        
-        This optimized version focuses on grid-based extraction to reduce
-        the number of candidates while covering the full screen.
+        Args:
+            screenshot: The screenshot result.
+            window_sizes: Optional override for window sizes.
+            window_stride: Optional override for grid step.
         """
         candidates = []
         image = screenshot.image
         img_width, img_height = image.size
         
-        # Scan the full screen width
-        scan_width = img_width
+        # Use dynamic parameters or fall back to config
+        grid_step = window_stride or config.grounding.window_stride
+        sizes = window_sizes or config.grounding.window_sizes
         
-        # Use a grid pattern from config
-        grid_step = config.grounding.window_stride
-        
-        # Use window sizes from config
-        window_sizes = config.grounding.window_sizes
-        
-        for window_size in window_sizes:
+        for window_size in sizes:
             # Scan the screen
+            # Start at a small margin (20px) to avoid taskbar/edges if possible
             for y in range(20, img_height - window_size - 20, grid_step):
-                for x in range(20, scan_width, grid_step):
+                for x in range(20, img_width - window_size - 20, grid_step):
                     candidates.append({
                         "x": x,
                         "y": y,
@@ -278,33 +279,43 @@ class IconDetector:
         
         return candidates
     
-    def _get_scaled_dimensions(self, width: int, height: int) -> Tuple[int, int, float]:
+    def _get_scaled_dimensions(self, width: int, height: int) -> Tuple[int, int, float, Optional[List[int]], Optional[int]]:
         """
-        Determine target dimensions based on aggressive 5% margin logic.
+        Determine target dimensions and dynamic window parameters.
         
-        Targets: 3840 (4K), 2560 (2K), 1920 (FHD), 1280 (HD).
-        Margin: 1.05 (5%)
+        Tiers (width >= threshold -> target_width):
+        - 4032 (4K+5%) -> 2560 (Windows: [80, 130, 180], Stride: 40)
+        - 3840 (4K)    -> 1920 (Windows: [64, 95, 130], Stride: 32)
+        - 2560 (2K)    -> 1280 (Windows: [40, 65, 90], Stride: 20)
+        - 1920 (FHD)   -> 990  (Windows: [32, 50, 70], Stride: 16)
+
+        These tiers are calculated for 9:16 screens to notepad app in all scale values from 100% to 175%
         """
-        # Define tiers in descending order based on user criteria
+        # Define tiers: (threshold, target_w, window_sizes, stride)
         tiermaps = [
-            (2560, 4032),  # Target 2560 if width >= 4032
-            (1920, 3840),  # Target 1920 if width >= 3840
-            (1280, 2560),  # Target 1280 if width >= 2560
-            (990, 1920)    # Target 990 if width >= 1920
+            (4032, 2560, [100, 150], 93),
+            (3840, 1920, [75, 110], 70),
+            (2560, 1280, [54, 78], 48),
+            (1920, 990, [42, 60], 36)
         ]
         
         target_w = width
-        for target, threshold in tiermaps:
+        dyn_windows = None
+        dyn_stride = None
+        
+        for threshold, target, windows, stride in tiermaps:
             if width >= threshold:
                 target_w = target
+                dyn_windows = windows
+                dyn_stride = stride
                 break
         
         if target_w == width:
-            return width, height, 1.0
+            return width, height, 1.0, None, None
             
         scale_factor = target_w / width
         target_h = int(height * scale_factor)
-        return target_w, target_h, scale_factor
+        return target_w, target_h, scale_factor, dyn_windows, dyn_stride
     
     def _score_candidates(
         self,

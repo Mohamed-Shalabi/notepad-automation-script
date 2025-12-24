@@ -52,9 +52,8 @@ class GroundingConfig:
     
     # Negative prompts to suppress false positives (text, wallpaper, etc)
     negative_prompts: List[str] = field(default_factory=lambda: [
-        "plain text not containing \"Notepad\"",
+        "plain text excluding \"Notepad\"",
         "plain text containing \"Notebook\" but in a paragraph of text",
-        "icon not related to Notepad",
         "a folder icon",
         "desktop wallpaper texture",
         "random user interface elements",
