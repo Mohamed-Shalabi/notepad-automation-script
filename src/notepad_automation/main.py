@@ -166,7 +166,11 @@ class NotepadAutomation:
         self.window.close_all_notepad_windows()
         time.sleep(0.5)
 
-        # Step 4: Detect Notepad icon
+        # # Step 4: Detect Notepad icon
+        # self.logger.info("Minimizing all windows to show desktop...")
+        # pyautogui.hotkey('win', 'd')
+        # time.sleep(1.0) # wait for animation
+        
         self.logger.info("Capturing desktop screenshot and searching for Notepad icon...")
         
         # Ensure screenshots directory exists

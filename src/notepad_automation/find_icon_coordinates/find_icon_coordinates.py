@@ -112,7 +112,7 @@ def find_with_orb(
 def find_with_template_matching(
     screenshot: np.ndarray,
     icon: np.ndarray,
-    threshold: float = 0.75
+    threshold: float = 0.7
 ) -> Optional[Tuple[int, int]]:
     best_score, best_center = 0, None
     best_scale = 1.0
