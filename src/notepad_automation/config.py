@@ -23,8 +23,8 @@ class ScreenConfig:
 class DesktopCoordinatesConfig:
     """Fixed coordinates for the Notepad icon."""
     # Notepad icon coordinates on the desktop
-    notepad_icon_x: int = 100
-    notepad_icon_y: int = 100
+    notepad_icon_x: int = 1678
+    notepad_icon_y: int = 380
 
 
 @dataclass
@@ -58,7 +58,7 @@ class APIConfig:
     max_retries: int = 3
     retry_delay_seconds: float = 2.0
     timeout_seconds: float = 10.0
-    max_posts: int = 10
+    max_posts: int = 2
 
 
 @dataclass

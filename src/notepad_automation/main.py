@@ -30,6 +30,8 @@ from .config import config
 from .automation import MouseController, KeyboardController, WindowValidator
 from .api import APIClient, Post
 from .files import FileManager
+from .find_icon_coordinates.find_icon_coordinates import find_icon_coordinates
+import pyautogui
 
 
 # Configure logging
@@ -44,7 +46,8 @@ def setup_logging(log_level: str = "INFO") -> logging.Logger:
     
     # Console handler
     console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(logging.INFO)
+    level = getattr(logging, log_level.upper())
+    console_handler.setLevel(level)
     console_format = logging.Formatter(
         "%(asctime)s | %(levelname)-8s | %(message)s",
         datefmt="%H:%M:%S"
@@ -142,7 +145,7 @@ class NotepadAutomation:
         self.logger.info("Step 1: Fetching posts from API")
         
         try:
-            posts = self.api.fetch_posts(max_posts=1)
+            posts = self.api.fetch_posts(max_posts=config.api.max_posts)
             self.logger.info(f"Successfully fetched {len(posts)} posts")
         except Exception as e:
             self.logger.error(f"Failed to fetch posts: {e}")
@@ -163,9 +166,31 @@ class NotepadAutomation:
         self.window.close_all_notepad_windows()
         time.sleep(0.5)
 
-        # Step 4: Get Notepad icon coordinates
-        icon_x = config.desktop_coords.notepad_icon_x
-        icon_y = config.desktop_coords.notepad_icon_y
+        # Step 4: Detect Notepad icon
+        self.logger.info("Capturing desktop screenshot and searching for Notepad icon...")
+        
+        # Ensure screenshots directory exists
+        Path("screenshots").mkdir(exist_ok=True)
+        
+        screenshot_path = "screenshots/desktop_current.png"
+        pyautogui.screenshot(screenshot_path)
+        
+        icon_path = str(Path(__file__).parent / "notepad_icon.png")
+        coords = find_icon_coordinates(screenshot_path, icon_path)
+        
+        if not coords:
+            self.logger.error("Notepad icon not detected on desktop")
+            return RunResult(
+                success=False,
+                total_posts=0,
+                successful_posts=0,
+                failed_posts=0,
+                results=[],
+                total_duration_seconds=time.time() - start_time
+            )
+            
+        icon_x, icon_y = coords
+        self.logger.info(f"Notepad icon found at ({icon_x}, {icon_y})")
             
         # Step 5: Double-click the icon
         self.logger.info(f"Double-clicking at ({icon_x}, {icon_y})")
