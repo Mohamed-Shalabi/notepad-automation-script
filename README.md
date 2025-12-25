@@ -10,6 +10,11 @@ This system demonstrates **visual UI grounding** - a technique that uses compute
 
 - **CV-Based Grounding**: Uses ORB (Oriented FAST and Rotated BRIEF) feature matching for robust icon detection.
 - **Prioritized Multi-Icon Support**: Supports multiple icon templates (e.g., `1.png`, `2.png`) stored in a `supported_icons` directory, matched in numerical priority order.
+- **Universal Scaling Support**:
+    - **Practically Tested**: 100% to 175% Windows scaling.
+    - **Theoretically Supported**: 25% to 4000%.
+- **Different Icon Sizes Compatibility**: Native support for **Small, Medium, and Large** desktop icon sizes.
+- **Text-Agnostic Detection**: Intelligent handling of icons **with or without text labels**.
 - **Multi-Scale Fallback**: Automatically falls back to multi-scale template matching if ORB fails, ensuring high reliability across different resolutions and scales.
 - **Detection Annotation**: Automatically highlights the detected icon in a screenshot for visual verification.
 - **Full Automation**: Fetches data from API, creates files in Notepad, types content, and saves them automatically.
@@ -19,10 +24,10 @@ This system demonstrates **visual UI grounding** - a technique that uses compute
 ## 🏗️ Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    Main Orchestrator                         │
-│  (Coordinates the complete workflow)                         │
-└─────────────────────┬───────────────────────────────────────┘
+┌───────────────────────────────────────────────────────┐
+│                 Main Orchestrator                     │
+│        (Coordinates the complete workflow)            │
+└───────────────────┬───────────────────────────────────┘
                       │
        ┌──────────────┼──────────────┬─────────────┐
        ▼              ▼              ▼             ▼
@@ -114,7 +119,7 @@ ORB (Oriented FAST and Rotated BRIEF) is a fast and robust local feature detecto
 
 ### Secondary: Multi-Scale Template Matching
 If ORB fails (common with very simple or low-texture icons), the system uses multi-scale template matching:
-1. **Pyramid Scaling**: Resizes the reference icon across multiple scales (0.25x to 2.0x).
+1. **Pyramid Scaling**: Resizes the reference icon across a massive range of scales (theoretically supporting 25% to 4000% size variations).
 2. **Normalized Cross-Correlation**: Finds the best match in the screenshot for each scale.
 3. **Thresholding**: Selects the match with the highest confidence score above a configurable threshold.
 
