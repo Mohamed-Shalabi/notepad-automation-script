@@ -45,7 +45,7 @@ def compute_orb_features(
 
 def estimate_center_from_matches(
     kp_icon, kp_screen, matches, icon_shape
-) -> Optional[Tuple[int, int]]:
+) -> Optional[Tuple[Tuple[int, int], Tuple[int, int, int, int]]]:
     src_pts = np.float32(
         [kp_icon[m.queryIdx].pt for m in matches]
     ).reshape(-1, 1, 2)
@@ -67,14 +67,22 @@ def estimate_center_from_matches(
         int(projected[:, 0, 0].mean()),
         int(projected[:, 0, 1].mean())
     )
-    logger.debug(f"ORB: Estimated center at {center}")
-    return center
+    
+    # Calculate bounding box (x, y, w, h)
+    x_coords = projected[:, 0, 0]
+    y_coords = projected[:, 0, 1]
+    min_x, max_x = int(x_coords.min()), int(x_coords.max())
+    min_y, max_y = int(y_coords.min()), int(y_coords.max())
+    bbox = (min_x, min_y, max_x - min_x, max_y - min_y)
+
+    logger.debug(f"ORB: Estimated center at {center}, bbox: {bbox}")
+    return center, bbox
 
 def find_with_orb(
     screenshot: np.ndarray,
     icon: np.ndarray,
     min_matches: int = 12
-) -> Optional[Tuple[int, int]]:
+) -> Optional[Tuple[Tuple[int, int], Tuple[int, int, int, int]]]:
     kp_i, des_i = compute_orb_features(icon, nfeatures=2000)
     logger.debug(f"ORB: Icon Features - Keypoints: {len(kp_i)}, Descriptors shape: {des_i.shape if des_i is not None else 'None'}")
     if des_i is None:
@@ -113,8 +121,9 @@ def find_with_template_matching(
     screenshot: np.ndarray,
     icon: np.ndarray,
     threshold: float = 0.7
-) -> Optional[Tuple[int, int]]:
+) -> Optional[Tuple[Tuple[int, int], Tuple[int, int, int, int]]]:
     best_score, best_center = 0, None
+    best_bbox = None
     best_scale = 1.0
 
     logger.debug(f"Template Matching: Starting multi-scale search (threshold: {threshold})")
@@ -133,6 +142,7 @@ def find_with_template_matching(
             h, w = resized.shape
             best_score = score
             best_center = (loc[0] + w // 2, loc[1] + h // 2)
+            best_bbox = (loc[0], loc[1], w, h)
             best_scale = scale
             logger.debug(f"Template Matching: Found better match at scale {scale:.2f} with score {score:.4f}")
 
@@ -141,12 +151,12 @@ def find_with_template_matching(
     else:
         logger.debug(f"Template Matching: Success! Best score {best_score:.4f} at scale {best_scale:.2f}")
 
-    return best_center if best_score >= threshold else None
+    return (best_center, best_bbox) if best_score >= threshold else None
 
 def find_icon_coordinates(
     screenshot_path: str,
     icon_path: str
-) -> Optional[Tuple[int, int]]:
+) -> Optional[Tuple[Tuple[int, int], Tuple[int, int, int, int]]]:
     screenshot = load_grayscale(screenshot_path)
     icon = preprocess_icon(cv2.imread(icon_path, cv2.IMREAD_UNCHANGED))
 

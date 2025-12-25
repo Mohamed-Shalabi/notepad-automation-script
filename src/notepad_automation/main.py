@@ -22,6 +22,8 @@ and detailed logging throughout the process.
 import logging
 import sys
 import time
+import cv2
+from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 from dataclasses import dataclass
@@ -180,9 +182,9 @@ class NotepadAutomation:
         pyautogui.screenshot(screenshot_path)
         
         icon_path = str(Path(__file__).parent / "notepad_icon.png")
-        coords = find_icon_coordinates(screenshot_path, icon_path)
+        result = find_icon_coordinates(screenshot_path, icon_path)
         
-        if not coords:
+        if not result:
             self.logger.error("Notepad icon not detected on desktop")
             return RunResult(
                 success=False,
@@ -193,8 +195,32 @@ class NotepadAutomation:
                 total_duration_seconds=time.time() - start_time
             )
             
+        coords, bbox = result
         icon_x, icon_y = coords
         self.logger.info(f"Notepad icon found at ({icon_x}, {icon_y})")
+
+        # Step 4.1: Annotate and save detection
+        try:
+            timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            annotated_dir = Path("screenshots/annotated")
+            annotated_dir.mkdir(parents=True, exist_ok=True)
+            
+            annotated_path = annotated_dir / f"annotated_at_{timestamp}.png"
+            
+            # Read the screenshot
+            img = cv2.imread(screenshot_path)
+            if img is not None:
+                # Draw the box (x, y, w, h)
+                bx, by, bw, bh = bbox
+                # Green box with thickness 2
+                cv2.rectangle(img, (bx, by), (bx + bw, by + bh), (0, 255, 0), 2)
+                # Label
+                cv2.putText(img, "Notepad", (bx, by - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+                
+                cv2.imwrite(str(annotated_path), img)
+                self.logger.info(f"Annotated screenshot saved to: {annotated_path}")
+        except Exception as e:
+            self.logger.warning(f"Failed to create annotated screenshot: {e}")
             
         # Step 5: Double-click the icon
         self.logger.info(f"Double-clicking at ({icon_x}, {icon_y})")

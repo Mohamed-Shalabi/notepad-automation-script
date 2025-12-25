@@ -10,15 +10,6 @@ from pathlib import Path
 from dataclasses import dataclass, field
 from typing import List
 
-
-@dataclass
-class ScreenConfig:
-    """Screen and display configuration."""
-    width: int = 1920
-    height: int = 1080
-    primary_monitor: int = 1  # 1-indexed for mss
-
-
 @dataclass
 class DesktopCoordinatesConfig:
     """Fixed coordinates for the Notepad icon."""
@@ -101,7 +92,6 @@ class LogConfig:
 @dataclass
 class Config:
     """Master configuration combining all sub-configurations."""
-    screen: ScreenConfig = field(default_factory=ScreenConfig)
     desktop_coords: DesktopCoordinatesConfig = field(default_factory=DesktopCoordinatesConfig)
     automation: AutomationConfig = field(default_factory=AutomationConfig)
     api: APIConfig = field(default_factory=APIConfig)

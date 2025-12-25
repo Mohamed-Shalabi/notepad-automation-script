@@ -35,7 +35,6 @@ logs/
 *.log
 
 # Project Specific
-screenshots/
 test_output.txt
 test_output_fast.txt
 error.log
