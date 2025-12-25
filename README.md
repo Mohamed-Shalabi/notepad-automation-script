@@ -9,7 +9,9 @@ This system demonstrates **visual UI grounding** - a technique that uses compute
 ### Key Features
 
 - **CV-Based Grounding**: Uses ORB (Oriented FAST and Rotated BRIEF) feature matching for robust icon detection.
+- **Prioritized Multi-Icon Support**: Supports multiple icon templates (e.g., `1.png`, `2.png`) stored in a `supported_icons` directory, matched in numerical priority order.
 - **Multi-Scale Fallback**: Automatically falls back to multi-scale template matching if ORB fails, ensuring high reliability across different resolutions and scales.
+- **Detection Annotation**: Automatically highlights the detected icon in a screenshot for visual verification.
 - **Full Automation**: Fetches data from API, creates files in Notepad, types content, and saves them automatically.
 - **Process-Aware**: Intelligent window management that targets specific processes to ensure safety and accuracy.
 - **Detailed Logging**: Comprehensive audit trail with debug-level logging of CV matching scores and coordinates.
@@ -95,7 +97,7 @@ notepad-automation/
 │       │   └── client.py             # JSONPlaceholder client
 │       ├── files/
 │       │   └── manager.py            # File operations
-│       └── notepad_icon.png          # Reference icon for detection
+│       └── supported_icons/          # Prioritized icon templates (1.png, 2.png, etc.)
 ├── tests/
 │   └── ...                           # Test files
 ├── screenshots/                      # Runtime screenshots for debugging
@@ -126,7 +128,9 @@ If ORB fails (common with very simple or low-texture icons), the system uses mul
 
 - **Files**: Created in `~/Desktop/tjm-project/` by default.
 - **Logs**: Detailed execution logs in `logs/automation.log`.
-- **Debug Media**: Screenshots taken during detection are saved in `screenshots/` for verification.
+- **Debug Media**: 
+    - Original screenshots: `screenshots/desktop_current.png`
+    - Annotated detections: `screenshots/annotated/annotated_at_YYYY-MM-DD_HH-MM-SS.png` (highlights the matched icon and template name)
 
 ## 📚 Dependencies
 

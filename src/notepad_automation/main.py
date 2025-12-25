@@ -181,11 +181,11 @@ class NotepadAutomation:
         screenshot_path = "screenshots/desktop_current.png"
         pyautogui.screenshot(screenshot_path)
         
-        icon_path = str(Path(__file__).parent / "notepad_icon.png")
-        result = find_icon_coordinates(screenshot_path, icon_path)
+        icons_dir = str(Path(__file__).parent / "supported_icons")
+        result = find_icon_coordinates(screenshot_path, icons_dir)
         
         if not result:
-            self.logger.error("Notepad icon not detected on desktop")
+            self.logger.error("Notepad icon not detected on desktop using any supported icon template")
             return RunResult(
                 success=False,
                 total_posts=0,
@@ -195,9 +195,9 @@ class NotepadAutomation:
                 total_duration_seconds=time.time() - start_time
             )
             
-        coords, bbox = result
+        coords, bbox, icon_name = result
         icon_x, icon_y = coords
-        self.logger.info(f"Notepad icon found at ({icon_x}, {icon_y})")
+        self.logger.info(f"Notepad icon found at ({icon_x}, {icon_y}) using template: {icon_name}")
 
         # Step 4.1: Annotate and save detection
         try:
@@ -214,8 +214,9 @@ class NotepadAutomation:
                 bx, by, bw, bh = bbox
                 # Green box with thickness 2
                 cv2.rectangle(img, (bx, by), (bx + bw, by + bh), (0, 255, 0), 2)
-                # Label
-                cv2.putText(img, "Notepad", (bx, by - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+                # Label with icon name
+                label = f"Match: {icon_name}"
+                cv2.putText(img, label, (bx, by - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
                 
                 cv2.imwrite(str(annotated_path), img)
                 self.logger.info(f"Annotated screenshot saved to: {annotated_path}")

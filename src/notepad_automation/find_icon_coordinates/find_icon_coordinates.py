@@ -1,7 +1,9 @@
 import logging
 import cv2
 import numpy as np
-from typing import Optional, Tuple
+import sys
+from pathlib import Path
+from typing import Optional, Tuple, List
 
 logger = logging.getLogger(__name__)
 
@@ -155,23 +157,75 @@ def find_with_template_matching(
 
 def find_icon_coordinates(
     screenshot_path: str,
-    icon_path: str
-) -> Optional[Tuple[Tuple[int, int], Tuple[int, int, int, int]]]:
-    screenshot = load_grayscale(screenshot_path)
-    icon = preprocess_icon(cv2.imread(icon_path, cv2.IMREAD_UNCHANGED))
-
-
-    logger.info(f"Attempting icon detection using ORB feature matching...")
-    result = find_with_orb(screenshot, icon)
-    if result is not None:
-        logger.info(f"Icon detected using ORB at {result}")
-        return result
-
-    logger.info("ORB detection failed. Attempting Template Matching with scaling...")
-    result = find_with_template_matching(screenshot, icon)
-    if result is not None:
-        logger.info(f"Icon detected using Template Matching at {result}")
-    else:
-        logger.warning("Icon detection failed: No matches found with ORB or Template Matching.")
+    icons_dir: str
+) -> Optional[Tuple[Tuple[int, int], Tuple[int, int, int, int], str]]:
+    """
+    Search for a Notepad icon in the screenshot using prioritized templates.
     
-    return result
+    Validates that all files in icons_dir are named as integers.
+    Matches are attempted in numerical order (1.png, 2.png, ...).
+    """
+    screenshot = load_grayscale(screenshot_path)
+    
+    icon_dir_path = Path(icons_dir)
+    if not icon_dir_path.exists() or not icon_dir_path.is_dir():
+        logger.error(f"Icons directory not found: {icons_dir}")
+        return None
+
+    # Get all files and validate they are named as integers
+    all_files = list(icon_dir_path.iterdir())
+    validated_icons = []
+    
+    for f in all_files:
+        if f.is_file() and f.suffix.lower() in {'.png', '.jpg', '.jpeg', '.bmp'}:
+            try:
+                # Check if stem (filename without extension) is an integer
+                priority = int(f.stem)
+                validated_icons.append((priority, f))
+            except ValueError:
+                error_msg = f"\nCRITICAL ERROR: Icon file '{f.name}' in '{icons_dir}' is not named as an integer.\nAll icon templates must be named strictly by priority (e.g., 1.png, 2.png, 3.png).\nPlease rename your icons to reflect the desired matching priority and try again."
+                print(error_msg)
+                logger.critical(error_msg)
+                sys.exit(1)
+
+    if not validated_icons:
+        logger.warning(f"No valid icon files found in {icons_dir}")
+        return None
+
+    # Sort numerically by priority (1 comes before 2, etc.)
+    validated_icons.sort(key=lambda x: x[0])
+    
+    logger.info(f"Searching for {len(validated_icons)} icons in priority order: {[f[1].name for f in validated_icons]}")
+
+    for priority, icon_file in validated_icons:
+        icon_path = str(icon_file)
+        icon_name = icon_file.name
+        
+        try:
+            icon_img = cv2.imread(icon_path, cv2.IMREAD_UNCHANGED)
+            if icon_img is None:
+                logger.warning(f"Failed to load icon: {icon_path}")
+                continue
+                
+            icon = preprocess_icon(icon_img)
+
+            logger.info(f"Attempting detection with icon: {icon_name} (priority {priority}) using ORB...")
+            result = find_with_orb(screenshot, icon)
+            if result is not None:
+                coords, bbox = result
+                logger.info(f"Icon '{icon_name}' detected using ORB at {coords}")
+                return coords, bbox, icon_name
+
+            logger.info(f"ORB failed for '{icon_name}'. Attempting Template Matching...")
+            result = find_with_template_matching(screenshot, icon)
+            if result is not None:
+                coords, bbox = result
+                logger.info(f"Icon '{icon_name}' detected using Template Matching at {coords}")
+                return coords, bbox, icon_name
+                
+        except Exception as e:
+            logger.error(f"Error processing icon {icon_name}: {e}")
+            continue
+
+    logger.warning("Icon detection failed: No matches found for any supported icon.")
+    return None
