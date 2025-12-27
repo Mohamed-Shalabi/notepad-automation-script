@@ -49,7 +49,7 @@ class APIConfig:
     max_retries: int = 3
     retry_delay_seconds: float = 2.0
     timeout_seconds: float = 10.0
-    max_posts: int = 2
+    max_posts: int = 10
 
 
 @dataclass
