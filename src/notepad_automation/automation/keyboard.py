@@ -10,6 +10,7 @@ import time
 from typing import Optional
 
 import pyautogui
+import pyperclip
 
 from ..config import config
 
@@ -28,44 +29,31 @@ class KeyboardController:
     
     def type_text(
         self,
-        text: str,
-        interval: Optional[float] = None
+        text: str
     ) -> None:
         """
-        Type text character by character.
+        Paste text using the system clipboard.
         
         Args:
-            text: The text to type.
-            interval: Interval between keystrokes in seconds.
+            text: The text to paste.
         """
-        interval = interval or config.automation.typing_interval
-        
-        logger.info(f"Typing {len(text)} characters")
+        logger.info(f"Pasting {len(text)} characters via clipboard")
         logger.debug(f"Text preview: {text[:50]}...")
         
-        # Use write for regular text, handling special characters
-        pyautogui.write(text, interval=interval)
-    
-    def type_text_slow(
-        self,
-        text: str,
-        interval: float = 0.05
-    ) -> None:
+        self.paste_text(text)
+
+    def paste_text(self, text: str) -> None:
         """
-        Type text more slowly, useful for unreliable inputs.
+        Copy text to clipboard and paste it.
         
         Args:
-            text: The text to type.
-            interval: Interval between keystrokes.
+            text: The text to paste.
         """
-        logger.info(f"Slow-typing {len(text)} characters")
-        
-        for char in text:
-            if char == '\n':
-                pyautogui.press('enter')
-            else:
-                pyautogui.write(char, interval=0)
-            time.sleep(interval)
+        pyperclip.copy(text)
+        time.sleep(0.1)  # Brief wait for clipboard sync
+        self.hotkey('ctrl', 'v')
+        time.sleep(0.1)  # Brief wait after paste
+    
     
     def press_key(self, key: str) -> None:
         """

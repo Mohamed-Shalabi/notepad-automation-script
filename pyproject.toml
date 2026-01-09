@@ -18,6 +18,7 @@ dependencies = [
     "opencv-python>=4.8.0",
     "numpy>=1.24.0",
     "pytesseract>=0.3.10",
+    "pyperclip>=1.8.2",
 ]
 
 [project.optional-dependencies]
