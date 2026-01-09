@@ -314,7 +314,7 @@ class NotepadAutomation:
             # Step D: Type the content
             content = post.format_content()
             self.logger.info(f"Typing content ({len(content)} chars)")
-            self.keyboard.type_text(content, interval=0.01)
+            self.keyboard.type_text(content, interval=0.05)
             
             # Step E: Save the file
             file_path = self.files.get_file_path(post.id)
