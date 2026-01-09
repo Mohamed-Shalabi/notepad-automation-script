@@ -9,11 +9,20 @@ logger = logging.getLogger(__name__)
 
 def preprocess_icon(icon: np.ndarray, min_size: int = 64) -> np.ndarray:
     """
-    Preprocess icon for ORB:
-    - Remove alpha channel if present
-    - Convert to grayscale
-    - Resize small icons to at least min_size
-    - Optional contrast enhancement
+    Prepares an icon image for feature matching by normalizing its properties.
+
+    The preprocessing pipeline includes:
+    1.  **Alpha Removal**: Converts BGRA to BGR to strip transparency.
+    2.  **Grayscale Conversion**: Reduces dimensionality for intensity-based matching.
+    3.  **Upscaling**: Resizes small icons to at least `min_size` to ensure enough keypoints can be detected.
+    4.  **Contrast Enhancement**: Applies histogram equalization to improve feature distinctiveness in low-contrast icons.
+
+    Args:
+        icon (np.ndarray): The input icon image (BGR or BGRA).
+        min_size (int, optional): The minimum width/height for the icon. Defaults to 64.
+
+    Returns:
+        np.ndarray: The preprocessed, grayscale, and potentially resized icon image.
     """
     # Remove alpha if exists
     if icon.ndim == 3 and icon.shape[2] == 4:
@@ -31,6 +40,18 @@ def preprocess_icon(icon: np.ndarray, min_size: int = 64) -> np.ndarray:
     return icon
 
 def load_grayscale(path: str) -> np.ndarray:
+    """
+    Loads an image from a file path directly in grayscale mode.
+
+    Args:
+        path (str): The file path to the image.
+
+    Returns:
+        np.ndarray: The loaded grayscale image.
+
+    Raises:
+        ValueError: If the image cannot be loaded (e.g., file not found or invalid format).
+    """
     image = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
     if image is None:
         raise ValueError(f"Failed to load image: {path}")
@@ -39,15 +60,51 @@ def load_grayscale(path: str) -> np.ndarray:
 def compute_orb_features(
     image: np.ndarray,
     nfeatures: int = 1500
-):
+) -> Tuple[List[cv2.KeyPoint], Optional[np.ndarray]]:
+    """
+    Detects ORB (Oriented FAST and Rotated BRIEF) keypoints and descriptors in an image.
+
+    ORB is a fast binary descriptor that is invariant to rotation and scale to some extent.
+
+    Args:
+        image (np.ndarray): The input grayscale image.
+        nfeatures (int, optional): The maximum number of features to retain. Defaults to 1500.
+
+    Returns:
+        Tuple[List[cv2.KeyPoint], Optional[np.ndarray]]:
+            - A list of detected keypoints.
+            - A numpy array of descriptors (shape: [num_keypoints, 32]), or None if no features found.
+    """
     orb = cv2.ORB_create(nfeatures=nfeatures)
     kp, des = orb.detectAndCompute(image, None)
     logger.debug(f"ORB: Detected {len(kp)} keypoints")
     return kp, des
 
 def estimate_center_from_matches(
-    kp_icon, kp_screen, matches, icon_shape
+    kp_icon: List[cv2.KeyPoint],
+    kp_screen: List[cv2.KeyPoint],
+    matches: List[cv2.DMatch],
+    icon_shape: Tuple[int, ...]
 ) -> Optional[Tuple[Tuple[int, int], Tuple[int, int, int, int]]]:
+    """
+    Estimates the position of the icon on the screen using Homography based on feature matches.
+
+    Uses RANSAC (Random Sample Consensus) to robustly estimate the geometric transformation
+    (Homography) between the icon keypoints and the screen keypoints, handling outliers effectively.
+
+    Args:
+        kp_icon (List[cv2.KeyPoint]): Keypoints from the icon image.
+        kp_screen (List[cv2.KeyPoint]): Keypoints from the screenshot.
+        matches (List[cv2.DMatch]): The list of good matches between the two sets of keypoints.
+        icon_shape (Tuple[int, ...]): The shape (height, width) of the original icon image.
+
+    Returns:
+        Optional[Tuple[Tuple[int, int], Tuple[int, int, int, int]]]:
+            - Center coordinates (x, y).
+            - Bounding box (x, y, width, height).
+            Returns None if Homography cannot be computed.
+    """
+    # Extract location of good matches
     src_pts = np.float32(
         [kp_icon[m.queryIdx].pt for m in matches]
     ).reshape(-1, 1, 2)
@@ -56,21 +113,29 @@ def estimate_center_from_matches(
         [kp_screen[m.trainIdx].pt for m in matches]
     ).reshape(-1, 1, 2)
 
+    # Find Homography Matrix: Transforms points from icon plane to screen plane
+    # RANSAC is used to ignore outlier matches that don't fit the dominant geometric model
     H, _ = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
     if H is None:
         logger.debug("ORB: Failed to find homography matrix")
         return None
 
-    h, w = icon_shape
+    # Get dimensions of the icon
+    h, w = icon_shape[:2]
+    
+    # Define the 4 corners of the icon in its local coordinate system
     corners = np.float32([[0, 0], [w, 0], [w, h], [0, h]]).reshape(-1, 1, 2)
+    
+    # Project these corners onto the screen using the calculated Homography matrix
     projected = cv2.perspectiveTransform(corners, H)
 
+    # Calculate the center of the projected shape (average of corners)
     center = (
         int(projected[:, 0, 0].mean()),
         int(projected[:, 0, 1].mean())
     )
     
-    # Calculate bounding box (x, y, w, h)
+    # Calculate axis-aligned bounding box (x, y, w, h) covering the projected shape
     x_coords = projected[:, 0, 0]
     y_coords = projected[:, 0, 1]
     min_x, max_x = int(x_coords.min()), int(x_coords.max())
@@ -85,8 +150,26 @@ def find_with_orb(
     icon: np.ndarray,
     min_matches: int = 12
 ) -> Optional[Tuple[Tuple[int, int], Tuple[int, int, int, int]]]:
+    """
+    Search for the icon using ORB feature matching.
+
+    Args:
+        screenshot (np.ndarray): The grayscale screenshot.
+        icon (np.ndarray): The grayscale icon template.
+        min_matches (int, optional): The minimum number of "good" matches required to consider a detection valid. Defaults to 12.
+
+    Returns:
+        Optional[Tuple[Tuple[int, int], Tuple[int, int, int, int]]]:
+            - Center coordinates (x, y).
+            - Bounding box (x, y, w, h).
+            Returns None if not enough matches are found or Homography fails.
+    """
+    # 1. Compute features for the icon
     kp_i, des_i = compute_orb_features(icon, nfeatures=2000)
     logger.debug(f"ORB: Icon Features - Keypoints: {len(kp_i)}, Descriptors shape: {des_i.shape if des_i is not None else 'None'}")
+    
+    # Fallback: If no features found in original icon, try resizing it (upscale/downscale)
+    # This handles cases where the icon resolution is too low or high for the default scale pyramid
     if des_i is None:
         for scale in np.linspace(2, 0.25, 10):
             resizedIcon = cv2.resize(icon, None, fx=scale, fy=scale)
@@ -95,26 +178,33 @@ def find_with_orb(
                 break
 
 
+    # 2. Compute features for the screenshot
     kp_s, des_s = compute_orb_features(screenshot)
     logger.debug(f"ORB: Screenshot Features - Keypoints: {len(kp_s)}, Descriptors shape: {des_s.shape if des_s is not None else 'None'}")
 
     if des_i is None or des_s is None:
         return None
 
+    # 3. Match features using Brute-Force Matcher with Hamming distance (suitable for binary descriptors like ORB)
     logger.debug("ORB: Matching features...")
     matcher = cv2.BFMatcher(cv2.NORM_HAMMING)
+    # k=2: Find the 2 best matches for each descriptor to apply Lowe's ratio test
     raw_matches = matcher.knnMatch(des_i, des_s, k=2)
 
+    # 4. Filter matches using Lowe's Ratio Test
+    # If the best match is significantly better (distance < 0.75 * second_best), it's considered specific and valid.
     good = [
         m for m, n in raw_matches
         if m.distance < 0.75 * n.distance
     ]
     logger.debug(f"ORB: Found {len(good)} good matches (threshold: {min_matches})")
 
+    # 5. Check if we have enough evidence
     if len(good) < min_matches:
         logger.debug("ORB: Too few good matches found" + str(len(good)) + " < " + str(min_matches))
         return None
 
+    # 6. Estimate geometry
     return estimate_center_from_matches(
         kp_i, kp_s, good, icon.shape
     )
@@ -124,17 +214,37 @@ def find_with_template_matching(
     icon: np.ndarray,
     threshold: float = 0.75
 ) -> Optional[Tuple[Tuple[int, int], Tuple[int, int, int, int]]]:
+    """
+    Searches for the icon using Multi-Scale Template Matching.
+
+    This acts as a robust fallback when feature matching fails (e.g., for simple icons with few features).
+    It iterates over a range of scales to handle cases where the icon size on screen differs from the template.
+
+    Args:
+        screenshot (np.ndarray): The grayscale screenshot.
+        icon (np.ndarray): The grayscale icon template.
+        threshold (float, optional): The Normalized Cross Correlation threshold (0 to 1). Defaults to 0.75.
+
+    Returns:
+        Optional[Tuple[Tuple[int, int], Tuple[int, int, int, int]]]:
+            - Center coordinates (x, y).
+            - Bounding box (x, y, w, h).
+            Returns None if no match exceeds the threshold.
+    """
     best_score, best_center = 0, None
     best_bbox = None
     best_scale = 1.0
 
     logger.debug(f"Template Matching: Starting multi-scale search (threshold: {threshold})")
+    
+    # Iterate through 40 scales from 0.25x to 2.0x
     for scale in np.linspace(0.25, 2, 40):
         resized = cv2.resize(icon, None, fx=scale, fy=scale)
         if resized.shape[0] > screenshot.shape[0] or resized.shape[1] > screenshot.shape[1]:
             logger.debug(f"Template Matching: Skipping scale {scale:.2f} (resized icon larger than screenshot)")
             continue
 
+        # Perform normalized correlation coefficient matching
         result = cv2.matchTemplate(
             screenshot, resized, cv2.TM_CCOEFF_NORMED
         )
@@ -160,10 +270,25 @@ def find_icon_coordinates(
     icons_dir: str
 ) -> Optional[Tuple[Tuple[int, int], Tuple[int, int, int, int], str]]:
     """
-    Search for a Notepad icon in the screenshot using prioritized templates.
-    
-    Validates that all files in icons_dir are named as integers.
-    Matches are attempted in numerical order (1.png, 2.png, ...).
+    Primary entry point to find a Notepad icon in a screenshot using prioritized templates.
+
+    This function implements a "Waterfall" or "Cascading" detection strategy:
+    1.  **Validation**: Ensures all icon templates are named as integers (e.g., `1.png`, `2.png`) to define priority.
+    2.  **Priority Loop**: Iterates through icons in ascending numerical order (Priority 1 first).
+    3.  **Hybrid Detection**:
+        *   **Stage 1 - ORB**: Exact feature matching. Fast and robust to rotation/scale.
+        *   **Stage 2 - Template Matching**: Fallback multi-scale dense search. Robust to simple shapes where ORB fails.
+
+    Args:
+        screenshot_path (str): Path to the screenshot file.
+        icons_dir (str): Directory containing numbered icon templates.
+
+    Returns:
+        Optional[Tuple[Tuple[int, int], Tuple[int, int, int, int], str]]:
+            - Center coordinates (x, y).
+            - Bounding box (x, y, w, h).
+            - Name of the successfully matched icon file.
+            Returns None if no icon is detected.
     """
     screenshot = load_grayscale(screenshot_path)
     

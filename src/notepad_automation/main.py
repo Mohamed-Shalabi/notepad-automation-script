@@ -128,20 +128,6 @@ class NotepadAutomation:
         self.logger.info("Starting Notepad Automation System")
         self.logger.info("=" * 60)
         
-        # Step 0: Ensure prerequisites
-        try:
-            self._ensure_prerequisites()
-        except Exception as e:
-            self.logger.error(f"Prerequisites check failed: {e}")
-            return RunResult(
-                success=False,
-                total_posts=0,
-                successful_posts=0,
-                failed_posts=0,
-                results=[],
-                total_duration_seconds=time.time() - start_time
-            )
-        
         # Step 1: Fetch posts from API
         self.logger.info("-" * 40)
         self.logger.info("Step 1: Fetching posts from API")
@@ -282,14 +268,6 @@ class NotepadAutomation:
             results=results,
             total_duration_seconds=total_duration
         )
-    
-    def _ensure_prerequisites(self) -> None:
-        """Check and ensure all prerequisites are met."""
-        self.logger.info("Checking prerequisites...")
-        
-        # Test API connection
-        if not self.api.test_connection():
-            self.logger.warning("API connection test failed (may work anyway)")
     
     def _process_post(self, post: Post, index: int) -> AutomationResult:
         """

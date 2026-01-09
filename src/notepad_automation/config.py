@@ -49,7 +49,7 @@ class APIConfig:
     max_retries: int = 3
     retry_delay_seconds: float = 2.0
     timeout_seconds: float = 10.0
-    max_posts: int = 10
+    max_posts: int = 1
 
 
 @dataclass
@@ -66,7 +66,7 @@ class FileConfig:
     @property
     def output_directory(self) -> Path:
         """Get the full path to the output directory on Desktop."""
-        desktop = Path(os.path.expanduser("~")) / "Desktop"
+        desktop = Path(os.path.expanduser("~")) / "OneDrive" / "Desktop"
         return desktop / self.output_folder_name
     
     def get_file_path(self, post_id: int) -> Path:

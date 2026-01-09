@@ -185,17 +185,3 @@ class APIClient:
             logger.info(f"Fetched {len(posts)} posts successfully")
             return posts
     
-    def test_connection(self) -> bool:
-        """
-        Test if the API is reachable.
-        
-        Returns:
-            True if connection successful, False otherwise.
-        """
-        try:
-            with httpx.Client(timeout=5.0) as client:
-                response = client.get(self.base_url)
-                return response.status_code == 200
-        except Exception as e:
-            logger.warning(f"Connection test failed: {e}")
-            return False

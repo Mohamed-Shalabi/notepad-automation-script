@@ -221,15 +221,8 @@ class WindowValidator:
         # But prefer to skip if unsure to be safe
         if window.process_name == "unknown":
             title = window.title
-            # precise match only
-            if title == "Notepad" or title == "Untitled - Notepad":
+            if "notepad" in title.lower():
                 return True
                 
         return False
     
-    def get_window_rect(self, window: WindowInfo) -> Tuple[int, int, int, int]:
-        """Get the current rectangle of a window."""
-        try:
-            return win32gui.GetWindowRect(window.hwnd)
-        except Exception:
-            return window.rect
