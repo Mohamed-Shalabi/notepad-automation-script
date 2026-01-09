@@ -286,8 +286,9 @@ class NotepadAutomation:
             # Step C.1: strict clean state - Open New File (Ctrl+N)
             # This prevents appending to previous file if Notepad restores session
             self.logger.info("Opening new file (Ctrl+N) to ensure clean buffer")
-            self.keyboard.new_file()
-            time.sleep(0.5)  # Wait for new tab/window notification/animation
+            if index != 0: 
+                self.keyboard.new_file()
+                time.sleep(0.5)  # Wait for new tab/window notification/animation
             
             # Step D: Type the content
             content = post.format_content()
@@ -296,8 +297,6 @@ class NotepadAutomation:
             
             # Step E: Save the file
             file_path = self.files.get_file_path(post.id)
-            filename = f"post_{post.id}.txt"
-            folder = self.files.get_output_directory_str()
             
             self.logger.info(f"Saving to: {file_path}")
             
@@ -313,9 +312,6 @@ class NotepadAutomation:
             
             # Handle potential overwrite prompt
             self.keyboard.handle_overwrite_prompt(overwrite=True)
-            time.sleep(0.5)
-            
-            # Additional safety wait
             time.sleep(0.5)
             
             # Step F: Verify file was saved
